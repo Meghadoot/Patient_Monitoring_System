@@ -1,12 +1,23 @@
-// ipc_handler.c - IPC Handler Source File
+/***************************************
+
+ ipc_handler.c - IPC Handler Source File
+
+****************************************/
+
 #include "ipc_handler.h"
+#include "middleware_config.h"  // <-- Use common config macros
+
+#include <dbus/dbus.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
 
 static int uds_socket_fd = -1;
 static DBusConnection *dbus_conn = NULL;
 
-// Initialize IPC components (D-Bus & UDS)
 void IPC_Init() {
-    // Initialize D-Bus Connection
     DBusError err;
     dbus_error_init(&err);
     dbus_conn = dbus_bus_get(DBUS_BUS_SESSION, &err);
@@ -15,13 +26,12 @@ void IPC_Init() {
         dbus_error_free(&err);
         return;
     }
-    dbus_bus_request_name(dbus_conn, DBUS_SERVICE, DBUS_NAME_FLAG_REPLACE_EXISTING, &err);
+    dbus_bus_request_name(dbus_conn, MW_DBUS_SERVICE, DBUS_NAME_FLAG_REPLACE_EXISTING, &err);
     if (dbus_error_is_set(&err)) {
         fprintf(stderr, "D-Bus Name Request Error: %s\n", err.message);
         dbus_error_free(&err);
     }
 
-    // Initialize Unix Domain Socket (UDS)
     struct sockaddr_un addr;
     uds_socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (uds_socket_fd < 0) {
@@ -30,8 +40,8 @@ void IPC_Init() {
     }
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, UDS_PATH, sizeof(addr.sun_path) - 1);
-    unlink(UDS_PATH);
+    strncpy(addr.sun_path, MW_UDS_PATH, sizeof(addr.sun_path) - 1);
+    unlink(MW_UDS_PATH);
     if (bind(uds_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("UDS Bind Failed");
         close(uds_socket_fd);
@@ -39,12 +49,11 @@ void IPC_Init() {
     }
 }
 
-// Handle incoming D-Bus messages
 void IPC_HandleDBusMessages() {
     while (dbus_connection_read_write(dbus_conn, 0)) {
         DBusMessage *msg = dbus_connection_pop_message(dbus_conn);
         if (msg) {
-            if (dbus_message_is_method_call(msg, DBUS_INTERFACE, "SendMessage")) {
+            if (dbus_message_is_method_call(msg, MW_DBUS_INTERFACE, "SendMessage")) {
                 const char *message;
                 if (dbus_message_get_args(msg, NULL, DBUS_TYPE_STRING, &message, DBUS_TYPE_INVALID)) {
                     printf("Received D-Bus Message: %s\n", message);
@@ -55,18 +64,16 @@ void IPC_HandleDBusMessages() {
     }
 }
 
-// Send a message via Unix Domain Socket
 void IPC_SendUDSMessage(const char *message) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, UDS_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, MW_UDS_PATH, sizeof(addr.sun_path) - 1);
     if (sendto(uds_socket_fd, message, strlen(message), 0, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("UDS Send Failed");
     }
 }
 
-// Receive messages from Unix Domain Socket
 void IPC_ReceiveUDSMessages() {
     char buffer[256];
     struct sockaddr_un addr;
@@ -78,13 +85,13 @@ void IPC_ReceiveUDSMessages() {
     }
 }
 
-// Cleanup IPC resources
 void IPC_Cleanup() {
     if (dbus_conn) {
         dbus_connection_unref(dbus_conn);
     }
     if (uds_socket_fd >= 0) {
         close(uds_socket_fd);
-        unlink(UDS_PATH);
+        unlink(MW_UDS_PATH);
     }
 }
+
